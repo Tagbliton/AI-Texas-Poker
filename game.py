@@ -195,7 +195,7 @@ class Player:
 
 
 class PokerGame:
-    def __init__(self, player_names: List[str], initial_chips: int = 1000):
+    def __init__(self, player_names: List[str], initial_chips: int = 1000, log_file: str = "poker_game_log.txt"):
         self.players = [Player(name, initial_chips) for name in player_names]
         self.deck = Deck()
         self.community_cards: List[Card] = []
@@ -206,6 +206,12 @@ class PokerGame:
         self.big_blind_amount = 20
         self.dealer_index = 0
         self.min_raise = self.big_blind_amount
+        self.log_file = log_file
+
+    def log_message(self, message: str):
+        """将消息写入日志文件"""
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
 
     def reset_game(self):
         self.deck = Deck()
@@ -248,9 +254,9 @@ class PokerGame:
         self.pot += sb_bet + bb_bet
         self.min_raise = self.big_blind_amount
 
-        print(f"{sb_player.name} 下小盲注 {sb_bet}")
-        print(f"{bb_player.name} 下大盲注 {bb_bet}")
-        print(f"当前底池: {self.pot}\n")
+        msg = f"{sb_player.name} 下小盲注 {sb_bet}\n{bb_player.name} 下大盲注 {bb_bet}\n当前底池: {self.pot}\n"
+        print(msg)
+        self.log_message(msg)
 
     def get_active_players(self) -> List[Player]:
         return [p for p in self.players if p.is_active and not p.has_folded]
@@ -290,8 +296,9 @@ class PokerGame:
                 self.current_player_index = (self.current_player_index + 1) % len(self.players)
                 continue
 
-            print(f"\n轮到 {player.name} 操作")
-            print(f"当前下注: {current_bet}, 您已下注: {player.current_bet}, 您的剩余筹码: {player.chips}")
+            status_msg = f"\n轮到 {player.name} 操作\n当前下注: {current_bet}, 您已下注: {player.current_bet}, 您的剩余筹码: {player.chips}\n"
+            print(status_msg)
+            self.log_message(status_msg)
 
             # Determine valid actions based on current bet and player's bet
             valid_actions = ["fold"]
@@ -319,7 +326,9 @@ class PokerGame:
                 else:
                     valid_actions.append("check")
 
-            print(f"可用操作: {valid_actions}")
+            actions_msg = f"可用操作: {valid_actions}\n"
+            print(actions_msg)
+            self.log_message(actions_msg)
 
             # In a real game, this would be user input. For simulation, we'll define a simple strategy or allow input.
             # Here, we'll prompt for action
@@ -331,33 +340,43 @@ class PokerGame:
                 player.has_folded = True
                 player.is_active = False
                 num_active_players -= 1
+                fold_msg = f"{player.name} 弃牌\n"
+                print(fold_msg)
+                self.log_message(fold_msg)
                 if num_active_players <= 1:
                     break
 
             elif action_input == "check":
-                print(f"{player.name} 过牌")
-                # No action needed, move to next player
+                check_msg = f"{player.name} 过牌\n"
+                print(check_msg)
+                self.log_message(check_msg)
 
             elif action_input == "call":
                 call_amount = current_bet - player.current_bet
                 actual_call = player.bet(call_amount)
                 self.pot += actual_call
-                print(f"{player.name} 跟注 {actual_call}")
-                print(f"{player.name} 剩余筹码: {player.chips}")
+                call_msg = f"{player.name} 跟注 {actual_call}\n{player.name} 剩余筹码: {player.chips}\n"
                 if player.chips == 0:
-                    print(f"{player.name} 已全下！")
+                    call_msg += f"{player.name} 已全下！\n"
+                print(call_msg)
+                self.log_message(call_msg)
 
             elif action_input == "raise":
                 min_raise_amount = max(self.min_raise, current_bet - player.current_bet + self.big_blind_amount)
                 max_raise_amount = player.chips + player.current_bet
-                print(f"最小加注额: {min_raise_amount}, 最大可加注到: {max_raise_amount}")
+                raise_prompt = f"最小加注额: {min_raise_amount}, 最大可加注到: {max_raise_amount}\n"
+                print(raise_prompt)
+                self.log_message(raise_prompt)
+
                 try:
                     raise_amount = int(input(f"请输入加注额 (至少 {min_raise_amount}): "))
                     while raise_amount < min_raise_amount or raise_amount > max_raise_amount:
                         raise_amount = int(
                             input(f"加注额无效。请输入 {min_raise_amount} 到 {max_raise_amount} 之间的数: "))
                 except ValueError:
-                    print("输入无效，使用最小加注额")
+                    invalid_input_msg = "输入无效，使用最小加注额\n"
+                    print(invalid_input_msg)
+                    self.log_message(invalid_input_msg)
                     raise_amount = min_raise_amount
 
                 actual_raise = player.bet(raise_amount - player.current_bet)
@@ -365,11 +384,12 @@ class PokerGame:
                 current_bet = player.current_bet
                 last_raiser_index = self.current_player_index
                 self.min_raise = raise_amount - (current_bet - actual_raise)
-                print(f"{player.name} 加注到 {current_bet} (净加注 {actual_raise})")
-                print(f"{player.name} 剩余筹码: {player.chips}")
-                bets_made_in_round += 1
+                raise_msg = f"{player.name} 加注到 {current_bet} (净加注 {actual_raise})\n{player.name} 剩余筹码: {player.chips}\n"
                 if player.chips == 0:
-                    print(f"{player.name} 已全下！")
+                    raise_msg += f"{player.name} 已全下！\n"
+                print(raise_msg)
+                self.log_message(raise_msg)
+                bets_made_in_round += 1
 
             self.current_player_index = (self.current_player_index + 1) % len(self.players)
 
@@ -435,38 +455,48 @@ class PokerGame:
 
     def distribute_pot(self, winners: List[Tuple[Player, HandRank, List[int], str]]):
         if not winners:
-            print("没有胜者！")
+            no_winner_msg = "没有胜者！\n"
+            print(no_winner_msg)
+            self.log_message(no_winner_msg)
             return
 
         if len(winners) == 1:
             winner, rank, ranks, hand_name = winners[0]
-            print(f"\n胜者: {winner.name} - {hand_name} ({' '.join(map(str, winner.hand))})")
+            win_msg = f"\n胜者: {winner.name} - {hand_name} ({' '.join(map(str, winner.hand))})\n{winner.name} 获得底池 {self.pot} 筹码！\n"
+            print(win_msg)
+            self.log_message(win_msg)
             winner.chips += self.pot
-            print(f"{winner.name} 获得底池 {self.pot} 筹码！")
         else:
-            print(f"\n平局！以下玩家获胜:")
+            tie_msg = f"\n平局！以下玩家获胜:\n"
+            print(tie_msg)
+            self.log_message(tie_msg)
             split_pot = self.pot // len(winners)
             for winner, rank, ranks, hand_name in winners:
-                print(f"- {winner.name} - {hand_name} ({' '.join(map(str, winner.hand))})")
+                detail_msg = f"- {winner.name} - {hand_name} ({' '.join(map(str, winner.hand))})\n  {winner.name} 获得 {split_pot} 筹码！\n"
+                print(detail_msg)
+                self.log_message(detail_msg)
                 winner.chips += split_pot
-                print(f"  {winner.name} 获得 {split_pot} 筹码！")
             if self.pot % len(winners) > 0:
                 # Handle remainder chips if pot doesn't divide evenly
                 remainder = self.pot % len(winners)
+                remainder_msg = f"剩余 {remainder} 筹码分配给前几位赢家\n"
+                print(remainder_msg)
+                self.log_message(remainder_msg)
                 for i in range(remainder):
                     winners[i][0].chips += 1
-                print(f"剩余 {remainder} 筹码分配给前几位赢家")
 
     def play_round(self):
-        print("\n" + "=" * 50)
-        print("新回合开始！")
-        print("=" * 50)
+        round_start_msg = "\n" + "=" * 50 + "\n新回合开始！\n" + "=" * 50 + "\n"
+        print(round_start_msg)
+        self.log_message(round_start_msg)
         self.reset_game()
         self.deal_hole_cards()
         self.post_blinds()
 
         # Pre-flop betting
-        print(self.get_betting_round_status())
+        pre_flop_status = self.get_betting_round_status()
+        print(pre_flop_status)
+        self.log_message(pre_flop_status)
         self.betting_round()
 
         # Check if only one player remains
@@ -477,7 +507,9 @@ class PokerGame:
         # Flop
         self.current_betting_round = 1
         self.deal_flop()
-        print(self.get_betting_round_status())
+        flop_status = self.get_betting_round_status()
+        print(flop_status)
+        self.log_message(flop_status)
         self.betting_round()
 
         if len(self.get_active_players()) <= 1:
@@ -487,7 +519,9 @@ class PokerGame:
         # Turn
         self.current_betting_round = 2
         self.deal_turn()
-        print(self.get_betting_round_status())
+        turn_status = self.get_betting_round_status()
+        print(turn_status)
+        self.log_message(turn_status)
         self.betting_round()
 
         if len(self.get_active_players()) <= 1:
@@ -497,7 +531,9 @@ class PokerGame:
         # River
         self.current_betting_round = 3
         self.deal_river()
-        print(self.get_betting_round_status())
+        river_status = self.get_betting_round_status()
+        print(river_status)
+        self.log_message(river_status)
         self.betting_round()
 
         self.end_round()
@@ -510,21 +546,27 @@ class PokerGame:
         elif len(active_players) == 1:
             # Only one player didn't fold
             winner = active_players[0]
-            print(f"\n{winner.name} 是唯一未弃牌的玩家，赢得底池 {self.pot}！")
+            win_fold_msg = f"\n{winner.name} 是唯一未弃牌的玩家，赢得底池 {self.pot}！\n"
+            print(win_fold_msg)
+            self.log_message(win_fold_msg)
             winner.chips += self.pot
         else:
             # This shouldn't happen in normal play
-            print("回合结束，无活跃玩家。")
+            no_active_msg = "回合结束，无活跃玩家。\n"
+            print(no_active_msg)
+            self.log_message(no_active_msg)
 
         # Show final hands if more than one player was active at the end
         if len(self.get_active_players()) > 0:
-            print("\n最终手牌:")
+            final_hands_msg = "\n最终手牌:\n"
             for player in self.players:
                 if not player.has_folded:
                     rank, ranks = PokerHandEvaluator.evaluate_hand(player.hand, self.community_cards)
                     hand_name = rank.name.replace('_', ' ').title()
-                    print(f"{player.name}: {' '.join(map(str, player.hand))} - {hand_name}")
-            print(f"公共牌: {' '.join(map(str, self.community_cards))}")
+                    final_hands_msg += f"{player.name}: {' '.join(map(str, player.hand))} - {hand_name}\n"
+            final_hands_msg += f"公共牌: {' '.join(map(str, self.community_cards))}\n"
+            print(final_hands_msg)
+            self.log_message(final_hands_msg)
 
 
 def main():
@@ -543,18 +585,28 @@ def main():
     except ValueError:
         initial_chips = 1000
 
-    game = PokerGame(player_names, initial_chips)
+    log_file = input("请输入日志文件名 (默认poker_game_log.txt): ").strip() or "poker_game_log.txt"
+
+    game = PokerGame(player_names, initial_chips, log_file)
+
+    # Clear the log file at the start of the game
+    with open(game.log_file, "w", encoding="utf-8") as f:
+        f.write("德州扑克游戏日志\n\n")
 
     while True:
         game.play_round()
 
-        print("\n当前筹码状况:")
+        chip_status = "\n当前筹码状况:\n"
         for player in game.players:
-            print(f"{player.name}: {player.chips} 筹码")
+            chip_status += f"{player.name}: {player.chips} 筹码\n"
+        print(chip_status)
+        game.log_message(chip_status)
 
         cont = input("\n是否开始新回合？(y/n): ").strip().lower()
         if cont != 'y':
-            print("游戏结束！感谢游玩。")
+            end_game_msg = "游戏结束！感谢游玩。\n"
+            print(end_game_msg)
+            game.log_message(end_game_msg)
             break
 
 
