@@ -273,10 +273,16 @@ class PokerGame:
         num_active_players = len(active_players)
         bets_made_in_round = 0
 
-        # First player to act
-        self.current_player_index = (self.dealer_index + 1) % len(self.players)
-        while self.players[self.current_player_index].has_folded or self.players[self.current_player_index].is_all_in:
-            self.current_player_index = (self.current_player_index + 1) % len(self.players)
+        # First player to act after blinds in pre-flop, or first active player otherwise
+        if self.current_betting_round == 0:  # Pre-flop
+            # Start after big blind
+            self.current_player_index = (self.dealer_index + 3) % len(self.players)
+        else:  # Post-flop (flop, turn, river)
+            # Start with first active player after dealer
+            self.current_player_index = (self.dealer_index + 1) % len(self.players)
+            while self.players[self.current_player_index].has_folded or self.players[
+                self.current_player_index].is_all_in:
+                self.current_player_index = (self.current_player_index + 1) % len(self.players)
 
         while True:
             player = self.players[self.current_player_index]
@@ -285,18 +291,33 @@ class PokerGame:
                 continue
 
             print(f"\n轮到 {player.name} 操作")
-            print(f"当前下注: {current_bet}, 您已下注: {player.current_bet}")
+            print(f"当前下注: {current_bet}, 您已下注: {player.current_bet}, 您的剩余筹码: {player.chips}")
 
-            # Determine valid actions
-            valid_actions = ["fold", "call"]
+            # Determine valid actions based on current bet and player's bet
+            valid_actions = ["fold"]
+            player_bet_difference = current_bet - player.current_bet
+
             if player.chips > 0:
-                if current_bet == player.current_bet:
-                    valid_actions.append("check")
+                # Player can call if they haven't matched the current bet yet
+                if player_bet_difference > 0:
+                    # Player must call or fold (or raise if they have chips)
+                    valid_actions.append("call")
+                    # Player can raise if they have enough chips
+                    if player.chips >= self.min_raise:
+                        valid_actions.append("raise")
                 else:
-                    valid_actions.append("raise")
+                    # Current bet is equal to or less than player's bet
+                    # Player can check or raise
+                    valid_actions.append("check")
+                    if player.chips >= self.min_raise:
+                        valid_actions.append("raise")
             else:
                 # Player is all-in, can only fold or call (which is free if current_bet <= player.current_bet)
-                pass
+                if player_bet_difference > 0:
+                    # Player must call (which is free as they have 0 chips left)
+                    pass  # No valid actions needed, they are forced to call by default
+                else:
+                    valid_actions.append("check")
 
             print(f"可用操作: {valid_actions}")
 
@@ -322,6 +343,7 @@ class PokerGame:
                 actual_call = player.bet(call_amount)
                 self.pot += actual_call
                 print(f"{player.name} 跟注 {actual_call}")
+                print(f"{player.name} 剩余筹码: {player.chips}")
                 if player.chips == 0:
                     print(f"{player.name} 已全下！")
 
@@ -344,6 +366,7 @@ class PokerGame:
                 last_raiser_index = self.current_player_index
                 self.min_raise = raise_amount - (current_bet - actual_raise)
                 print(f"{player.name} 加注到 {current_bet} (净加注 {actual_raise})")
+                print(f"{player.name} 剩余筹码: {player.chips}")
                 bets_made_in_round += 1
                 if player.chips == 0:
                     print(f"{player.name} 已全下！")
