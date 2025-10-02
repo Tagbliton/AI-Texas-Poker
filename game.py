@@ -1,9 +1,11 @@
 import random
+import json
 from typing import List, Dict, Tuple, Optional
 from enum import Enum
 from collections import Counter
 from itertools import combinations
-
+from player_api import player_action
+from referees_api import referees
 
 class Suit(Enum):
     HEARTS = '♥'
@@ -349,10 +351,26 @@ class PokerGame:
 
             action_input = ""
             prompt_msg = f"你需要跟注 {amount_to_call}。可用操作: {valid_actions}: "
+            print(prompt_msg)
             self.log_message(prompt_msg)
 
             while action_input not in valid_actions:
-                action_input = input(prompt_msg).strip().lower()
+                #AI接管
+                referees()
+                #input(prompt_msg)
+                action_results = json.loads(player_action())
+                # player_action = action_results["action"]
+                player_os = "os: " + action_results["os"]
+                print(player_os)
+                self.log_message(player_os)
+                player_expression = "expression: " + action_results["expression"]
+                print(player_expression)
+                self.log_message(player_expression)
+                player_say = "say: " + action_results["say"]
+                print(player_say)
+                self.log_message(player_say)
+                self.log_message(action_results["chips"])
+                action_input = action_results["action"].strip().lower()
 
             if action_input == "fold":
                 player.has_folded = True
@@ -379,7 +397,9 @@ class PokerGame:
                 raise_to = 0
                 while True:
                     try:
-                        raise_to_str = input(f"请输入总下注额 (最小: {min_raise_to}, 最大: {max_raise_to}): ")
+                        #AI接管
+                        print(f"请输入总下注额 (最小: {min_raise_to}, 最大: {max_raise_to}): ")
+                        raise_to_str = action_results["chips"]
                         raise_to = int(raise_to_str)
                         if min_raise_to <= raise_to <= max_raise_to:
                             break
@@ -631,4 +651,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-可用操作
