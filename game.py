@@ -348,6 +348,8 @@ class PokerGame:
 
             action_input = ""
             prompt_msg = f"你需要跟注 {amount_to_call}。可用操作: {valid_actions}: "
+            self.log_message(prompt_msg)
+
             while action_input not in valid_actions:
                 action_input = input(prompt_msg).strip().lower()
 
@@ -516,7 +518,10 @@ class PokerGame:
 
         self.post_blinds()
         self.deal_hole_cards()
-        for p in self.players: print(f"{p.name}: {p.hand}")
+        for p in self.players:
+            hind_message = f"{p.name}: {p.hand}， 剩余筹码: {p.chips}"
+            print(hind_message)
+            self.log_message(hind_message)
 
         # Pre-flop
         self.current_betting_round = "Pre-flop"
@@ -583,7 +588,7 @@ def main():
             print("无效输入。")
 
     for i in range(num_players):
-        name = input(f"请输入玩家 {i + 1} 的名字: ").strip() or f"玩家 {i + 1}"
+        name = f"ID: {i + 1}, 名称: " + input(f"请输入玩家 {i + 1} 的名字: ").strip() or f"玩家 {i + 1}"
         player_names.append(name)
 
     try:
