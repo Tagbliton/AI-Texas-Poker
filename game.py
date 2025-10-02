@@ -5,7 +5,6 @@ from collections import Counter
 from itertools import combinations
 
 
-
 class Suit(Enum):
     HEARTS = '♥'
     DIAMONDS = '♦'
@@ -92,21 +91,23 @@ class PokerHandEvaluator:
     def evaluate_hand(player_cards: List[Card], community_cards: List[Card]) -> Tuple[HandRank, List[int]]:
         all_cards = player_cards + community_cards
 
-        best_hand_rank = HandRank.HIGH_CARD
-        best_tie_breaker = []
+        best_hand_rank = None
+        best_tie_breaker = None
 
         for hand_combo in combinations(all_cards, 5):
             current_rank, current_tie_breaker = PokerHandEvaluator._evaluate_5_card_hand(list(hand_combo))
+
+            if best_hand_rank is None:
+                best_hand_rank = current_rank
+                best_tie_breaker = current_tie_breaker
+                continue
+
             if current_rank.value > best_hand_rank.value:
                 best_hand_rank = current_rank
                 best_tie_breaker = current_tie_breaker
             elif current_rank.value == best_hand_rank.value:
-                for i in range(len(current_tie_breaker)):
-                    if current_tie_breaker[i] > best_tie_breaker[i]:
-                        best_tie_breaker = current_tie_breaker
-                        break
-                    if current_tie_breaker[i] < best_tie_breaker[i]:
-                        break
+                if current_tie_breaker > best_tie_breaker:
+                    best_tie_breaker = current_tie_breaker
 
         return best_hand_rank, best_tie_breaker
 
@@ -117,19 +118,21 @@ class PokerHandEvaluator:
         suits = [card.suit for card in hand]
 
         is_flush = len(set(suits)) == 1
-
         unique_ranks = sorted(list(set(ranks)), reverse=True)
         is_straight = len(unique_ranks) == 5 and (unique_ranks[0] - unique_ranks[4] == 4)
 
         is_wheel_straight = unique_ranks == [14, 5, 4, 3, 2]
         if is_wheel_straight:
             is_straight = True
-            ranks = [5, 4, 3, 2, 1]
+            # For tie-breaking purposes, the wheel straight's high card is the 5.
+            tie_breaker_ranks = [5, 4, 3, 2, 1]
+        else:
+            tie_breaker_ranks = ranks
 
         if is_straight and is_flush:
             if unique_ranks == [14, 13, 12, 11, 10]:
                 return HandRank.ROYAL_FLUSH, [14]
-            return HandRank.STRAIGHT_FLUSH, [ranks[0]]
+            return HandRank.STRAIGHT_FLUSH, [tie_breaker_ranks[0]]
 
         rank_counts = Counter(ranks)
         sorted_rank_counts = sorted(rank_counts.items(), key=lambda x: (x[1], x[0]), reverse=True)
@@ -138,24 +141,25 @@ class PokerHandEvaluator:
         main_ranks = [c[0] for c in sorted_rank_counts]
 
         if counts[0] == 4:
-            return HandRank.FOUR_OF_A_KIND, [main_ranks[0], main_ranks[1]]
+            kicker = [r for r in main_ranks if r != main_ranks[0]][0]
+            return HandRank.FOUR_OF_A_KIND, [main_ranks[0], kicker]
         if counts[0] == 3 and counts[1] == 2:
             return HandRank.FULL_HOUSE, [main_ranks[0], main_ranks[1]]
         if is_flush:
-            return HandRank.FLUSH, ranks
+            return HandRank.FLUSH, ranks[:5]
         if is_straight:
-            return HandRank.STRAIGHT, [ranks[0]]
+            return HandRank.STRAIGHT, [tie_breaker_ranks[0]]
         if counts[0] == 3:
-            kickers = [r for r in main_ranks if r != main_ranks[0]]
+            kickers = sorted([r for r in ranks if r != main_ranks[0]], reverse=True)
             return HandRank.THREE_OF_A_KIND, [main_ranks[0]] + kickers[:2]
         if counts[0] == 2 and counts[1] == 2:
             pairs = sorted([main_ranks[0], main_ranks[1]], reverse=True)
-            kicker = main_ranks[2]
+            kicker = [r for r in main_ranks if r not in pairs][0]
             return HandRank.TWO_PAIR, pairs + [kicker]
         if counts[0] == 2:
-            kickers = [r for r in main_ranks if r != main_ranks[0]]
+            kickers = sorted([r for r in ranks if r != main_ranks[0]], reverse=True)
             return HandRank.PAIR, [main_ranks[0]] + kickers[:3]
-        return HandRank.HIGH_CARD, ranks
+        return HandRank.HIGH_CARD, ranks[:5]
 
 
 class Player:
@@ -218,10 +222,11 @@ class PokerGame:
         start_index = (self.dealer_index + 1) % len(self.players)
         for i in range(len(self.players) * 2):
             player_index = (start_index + i) % len(self.players)
-            self.players[player_index].hand.append(self.deck.deal_card())
+            if not self.players[player_index].has_folded:
+                self.players[player_index].hand.append(self.deck.deal_card())
 
     def _deal_community(self, count: int):
-        if self.deck.cards: self.deck.deal_card()
+        if self.deck.cards: self.deck.deal_card()  # Burn a card
         for _ in range(count):
             if self.deck.cards: self.community_cards.append(self.deck.deal_card())
 
@@ -276,6 +281,7 @@ class PokerGame:
 
     def betting_round(self):
         num_players = len(self.players)
+        if num_players == 0: return
 
         if self.current_betting_round == "Pre-flop":
             action_index = (self.dealer_index + 3) % num_players
@@ -285,30 +291,40 @@ class PokerGame:
 
         current_bet = self.big_blind_amount if self.current_betting_round == "Pre-flop" else 0
         min_raise = self.big_blind_amount
-        action_closer = None
-
-        if self.current_betting_round == "Pre-flop":
-            bb_index = (self.dealer_index + 2) % num_players
-            if num_players == 2: bb_index = (self.dealer_index + 1) % num_players
-            action_closer = self.players[bb_index]
-
         players_have_acted = set()
 
+        # *** BUG FIX: Rewritten loop termination logic ***
         while True:
             active_players = self.get_active_players()
-            if len(active_players) <= 1: break
+            players_who_can_act = [p for p in active_players if not p.is_all_in]
+
+            # Condition 1: Only one or zero players left, round is over.
+            if len(active_players) <= 1:
+                break
+
+            # Condition 2: Fewer than 2 players can act (i.e., all others are all-in), no more betting is possible.
+            # This is the key fix for the infinite loop.
+            if len(players_who_can_act) < 2:
+                # Check if the last remaining player to act needs to call. If not, break.
+                if len(players_who_can_act) == 1:
+                    last_player = players_who_can_act[0]
+                    if last_player.bet_in_round == current_bet and last_player in players_have_acted:
+                        break
+                else:  # 0 players can act
+                    break
+
+            # Condition 3: Action is "closed". All players who can act have matched the highest bet
+            # and have had a turn to act.
+            all_bets_matched = all(p.bet_in_round == current_bet for p in players_who_can_act)
+            if current_bet > 0 and all_bets_matched and players_have_acted.issuperset(players_who_can_act):
+                break
+
+            # Condition 4: Everyone checks around.
+            if current_bet == 0 and len(players_have_acted) == len(players_who_can_act) and len(
+                    players_who_can_act) > 0:
+                break
 
             player = self.players[action_index % num_players]
-
-            is_round_over = False
-            if player == action_closer:
-                is_round_over = True
-            if action_closer is None and len(players_have_acted) == len(active_players):
-                is_round_over = True
-            if self.current_betting_round == "Pre-flop" and player == action_closer and current_bet == self.big_blind_amount:
-                is_round_over = False
-
-            if is_round_over: break
 
             if player.has_folded or player.is_all_in:
                 action_index += 1
@@ -325,11 +341,8 @@ class PokerGame:
             valid_actions = ["fold"]
             if amount_to_call == 0:
                 valid_actions.append("check")
-            elif player.chips > amount_to_call:
+            if player.chips > 0:
                 valid_actions.append("call")
-            elif player.chips <= amount_to_call:
-                valid_actions.append("call")
-
             if player.chips > amount_to_call:
                 valid_actions.append("raise")
 
@@ -340,27 +353,26 @@ class PokerGame:
 
             if action_input == "fold":
                 player.has_folded = True
-                msg = f"{player.name} 弃牌"
+                msg = f"{player.name} 弃牌";
                 print(msg);
                 self.log_message(msg)
-
             elif action_input == "check":
-                msg = f"{player.name} 过牌"
+                msg = f"{player.name} 过牌";
                 print(msg);
                 self.log_message(msg)
-
             elif action_input == "call":
                 bet_amount = player.bet(amount_to_call)
                 self.pot += bet_amount
-                msg = f"{player.name} 跟注 {bet_amount}"
+                msg = f"{player.name} 跟注 {bet_amount}";
                 print(msg);
                 self.log_message(msg)
-                if player.is_all_in: print(f"{player.name} 已全下！")
-
+                if player.is_all_in:
+                    msg = f"{player.name} 已全下！";
+                    print(msg);
+                    self.log_message(msg)
             elif action_input == "raise":
                 min_raise_to = current_bet + min_raise
                 max_raise_to = player.chips + player.bet_in_round
-
                 raise_to = 0
                 while True:
                     try:
@@ -379,13 +391,15 @@ class PokerGame:
 
                 min_raise = raise_to - current_bet
                 current_bet = raise_to
-                action_closer = player
-                players_have_acted = {player}
+                players_have_acted = {player}  # A raise re-opens the action
 
-                msg = f"{player.name} 加注到 {current_bet}"
+                msg = f"{player.name} 加注到 {current_bet}";
                 print(msg);
                 self.log_message(msg)
-                if player.is_all_in: print(f"{player.name} 已全下！")
+                if player.is_all_in:
+                    msg = f"{player.name} 已全下！";
+                    print(msg);
+                    self.log_message(msg)
 
             action_index += 1
 
@@ -398,7 +412,7 @@ class PokerGame:
             rank, tie_breaker = PokerHandEvaluator.evaluate_hand(player.hand, self.community_cards)
             results.append({'player': player, 'rank': rank, 'tie_breaker': tie_breaker})
 
-        results.sort(key=lambda x: (x['rank'].value, x['tie_breaker']), reverse=True)
+        results.sort(key=lambda x: (x['rank'].value, tuple(x['tie_breaker'])), reverse=True)
 
         best_rank = results[0]['rank']
         best_tie_breaker = results[0]['tie_breaker']
@@ -408,36 +422,42 @@ class PokerGame:
         return winners
 
     def distribute_pot(self):
-        in_hand_players = self.get_active_players()
+        # *** BUG FIX: Completely rewritten, clearer side pot logic ***
+        contenders = [p for p in self.players if not p.has_folded]
 
-        if len(in_hand_players) == 1:
-            winner = in_hand_players[0]
+        if len(contenders) == 1:
+            winner = contenders[0]
             msg = f"\n其他玩家都已弃牌, {winner.name} 赢得底池 {self.pot}！"
             print(msg);
             self.log_message(msg)
             winner.chips += self.pot
             return
 
-        # *** BUG FIX: Rewritten side pot calculation logic ***
-        pots = []
-        committed_players = [p for p in in_hand_players if p.bet_in_hand > 0]
-        if not committed_players: return
+        # Step 1: Identify all unique bet amounts (pot levels)
+        pot_levels = sorted(list(set(p.bet_in_hand for p in self.players)))
 
-        pot_levels = sorted(list(set(p.bet_in_hand for p in committed_players)))
+        pots = []
         last_level = 0
 
+        # Step 2: Create a pot for each level
         for level in pot_levels:
-            level_contribution = level - last_level
-            players_at_this_level = [p for p in self.players if p.bet_in_hand >= level]
-            pot_size = level_contribution * len(players_at_this_level)
+            if level == 0: continue
 
-            eligible_players = [p for p in players_at_this_level if not p.has_folded]
+            pot_contribution = level - last_level
+
+            # Find players who contributed to this pot slice
+            players_at_this_level = [p for p in self.players if p.bet_in_hand >= level]
+            pot_size = pot_contribution * len(players_at_this_level)
+
+            # Find which of the contenders are eligible for this pot
+            eligible_players = [p for p in contenders if p.bet_in_hand >= level]
 
             if pot_size > 0 and eligible_players:
                 pots.append({'size': pot_size, 'eligible_players': eligible_players})
 
             last_level = level
 
+        # Step 3: Distribute each pot to the winner(s)
         for i, pot in enumerate(pots):
             pot_name = f"主池" if i == 0 else f"边池 {i}"
             winners = self.determine_winner(pot['eligible_players'])
@@ -458,24 +478,26 @@ class PokerGame:
                 self.log_message(win_msg)
                 winner.chips += win_amount
 
+            # Distribute remainder chips one by one starting left of the dealer
             if remainder > 0:
-                for j in range(remainder): winners[j].chips += 1
+                for j in range(len(self.players)):
+                    player_to_check = self.players[(self.dealer_index + 1 + j) % len(self.players)]
+                    if player_to_check in winners:
+                        player_to_check.chips += 1
+                        remainder -= 1
+                        if remainder == 0: break
 
     def should_skip_to_showdown(self) -> bool:
-        """ BUG FIX: New method to check if betting is over due to all-ins. """
         active_players = self.get_active_players()
-        # If 0 or 1 active players are not all-in, no more betting can occur.
         players_who_can_bet = [p for p in active_players if not p.is_all_in]
         return len(players_who_can_bet) < 2
 
     def run_to_showdown(self):
-        """ BUG FIX: New method to deal remaining cards and end the round. """
-        msg = "\n所有剩余玩家均已全下，直接发完公共牌进行结算..."
+        msg = "\n无人可下注或只剩一人可下注，直接发完公共牌进行结算..."
         print(msg);
         self.log_message(msg)
 
         cards_on_board = len(self.community_cards)
-
         if cards_on_board < 3: self.deal_flop()
         if cards_on_board < 4: self.deal_turn()
         if cards_on_board < 5: self.deal_river()
@@ -483,7 +505,6 @@ class PokerGame:
         self.end_round()
 
     def play_round(self):
-        """ BUG FIX: Modified to handle all-in showdowns correctly. """
         self.reset_hand()
         if len(self.players) < 2:
             print("玩家不足，游戏结束。");
@@ -499,7 +520,7 @@ class PokerGame:
 
         # Pre-flop
         self.current_betting_round = "Pre-flop"
-        self.betting_round()
+        if not self.should_skip_to_showdown(): self.betting_round()
         if len(self.get_active_players()) <= 1: self.end_round(); return True
         if self.should_skip_to_showdown(): self.run_to_showdown(); return True
 
@@ -508,7 +529,7 @@ class PokerGame:
         self.current_betting_round = "Flop"
         self.deal_flop()
         print(self.get_betting_round_status())
-        self.betting_round()
+        if not self.should_skip_to_showdown(): self.betting_round()
         if len(self.get_active_players()) <= 1: self.end_round(); return True
         if self.should_skip_to_showdown(): self.run_to_showdown(); return True
 
@@ -517,7 +538,7 @@ class PokerGame:
         self.current_betting_round = "Turn"
         self.deal_turn()
         print(self.get_betting_round_status())
-        self.betting_round()
+        if not self.should_skip_to_showdown(): self.betting_round()
         if len(self.get_active_players()) <= 1: self.end_round(); return True
         if self.should_skip_to_showdown(): self.run_to_showdown(); return True
 
@@ -526,23 +547,22 @@ class PokerGame:
         self.current_betting_round = "River"
         self.deal_river()
         print(self.get_betting_round_status())
-        self.betting_round()
+        if not self.should_skip_to_showdown(): self.betting_round()
 
         self.end_round()
         return True
 
     def end_round(self):
         print("\n" + "-" * 15 + " 回合结束 " + "-" * 15)
-
-        # Display community cards if they were dealt
         if self.community_cards:
             print(f"\n公共牌: {' '.join(map(str, self.community_cards))}")
 
         self.distribute_pot()
 
         final_hands_msg = "\n最终亮牌:\n"
+        # Show hands of all players who didn't fold
         for player in self.players:
-            if not player.has_folded and player.bet_in_hand > 0:
+            if not player.has_folded:
                 rank, _ = PokerHandEvaluator.evaluate_hand(player.hand, self.community_cards)
                 hand_name = rank.name.replace('_', ' ').title()
                 final_hands_msg += f"{player.name}: {' '.join(map(str, player.hand))} -> {hand_name}\n"
@@ -553,9 +573,7 @@ class PokerGame:
 
 
 def main():
-    # ... [main function remains the same as your last provided version] ...
     print("欢迎来到德州扑克模拟器！")
-
     player_names = []
     num_players = 0
     while not 2 <= num_players <= 9:
@@ -582,16 +600,19 @@ def main():
         if not game.play_round(): break
 
         chip_status = "\n当前筹码状况:\n"
-        for player in game.players:
-            chip_status += f"{player.name}: {player.chips} 筹码\n"
+        for player in game.players: chip_status += f"{player.name}: {player.chips} 筹码\n"
         print(chip_status);
         game.log_message(chip_status)
 
         if len(game.players) < 2:
             if game.players:
-                print(f"\n游戏结束！最终胜者是 {game.players[0].name}！")
+                win_msg = f"\n游戏结束！最终胜者是 {game.players[0].name}！"
+                print(win_msg);
+                game.log_message(win_msg)
             else:
-                print("\n游戏结束！没有赢家。")
+                msg = "\n游戏结束！没有赢家。"
+                print(msg);
+                game.log_message(msg)
             break
 
         cont = input("\n是否开始新回合？(y/n): ").strip().lower()
