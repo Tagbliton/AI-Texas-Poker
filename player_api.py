@@ -6,7 +6,8 @@ from openai import OpenAI
 
 # 玩家操作
 def player_action():
-    print("玩家正在思考")
+
+
     # load rule
     with open('rule/player_system.json', 'r', encoding='utf-8') as f:
         rule = f.read()
@@ -20,16 +21,33 @@ def player_action():
         messages = f.read()
     messages = json.loads(messages)
 
+    #适配Gemini结构化json输出额外附带"[]"
+    messages = messages[0]
+
     # 玩家信息
-    player1_message = messages["id1"][0]
-    player2_message = messages["id2"][0]
-    player3_message = messages["id3"][0]
+    try:
+        player1_message = messages["id1"][0]
+    except:
+        pass
+    try:
+        player2_message = messages["id2"][0]
+    except:
+        pass
+    try:
+        player3_message = messages["id3"][0]
+    except:
+        pass
+
     # 公共信息
     public_messages = messages["public_messages"]
     # 本轮玩家
     next_player_id = messages["next_player_id"]
     # 可用操作
     remark_and_available_operations = messages["remark_and_available_operations"]
+
+    #当前玩家
+    next_player_name = messages[f"id{next_player_id}"][0]["name"]
+    print(f"{next_player_name}正在思考")
 
     if next_player_id == "1":
 
